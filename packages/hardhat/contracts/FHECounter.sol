@@ -40,6 +40,16 @@ contract FHECounter {
         FHE.allowThis(ONE);
     }
 
+    function decrypt() public {
+        FHE.decrypt(count);
+    }
+
+    function getDecrypted() public view returns (uint32, bool) {
+        (uint32 value, bool is_decrypted) = FHE.getDecryptResultSafe(count);
+
+        return (value, is_decrypted);
+    }
+
     /**
      * @dev Increments the encrypted counter value by 1
      * Updates access permissions to allow the contract and sender to read the new value

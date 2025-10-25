@@ -109,6 +109,7 @@ export const useFetchBlocks = () => {
           );
 
           setBlocks(prevBlocks => [newBlock, ...prevBlocks.slice(0, BLOCKS_PER_PAGE - 1)]);
+          // debugger;
           setTransactionReceipts(prevReceipts => ({ ...prevReceipts, ...Object.assign({}, ...receipts) }));
         }
         if (newBlock.number) {
