@@ -26,6 +26,12 @@ struct OtpNote {
     address pubCommitter;
 }
 
+struct DepositNote {
+    euint256 encEmailWithSaltHash;
+    address token;
+    uint256 amount;
+}
+
 contract FHECounter {
     /// @notice The encrypted counter value
     address trusted_otp_committer = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
@@ -36,13 +42,13 @@ contract FHECounter {
 
     mapping(uint256 => OtpNote) public otpNotes;
 
-    mapping(euint256 ctHash => address) private otpNotesCommitter;
+    mapping(euint256 depositEmailWithSaltHash => uint8) private depositNotes; // must be not boolean but state: deposited | requested | withdrawn
+    mapping(euint256 depositEmailWithSaltHash => address) private depositNoteToken;
+    mapping(euint256 depositEmailWithSaltHash => uint256) private depositNoteAmount;
 
-    mapping(euint256 ctHash => uint8) private depositNotes; // must be not boolean but state: deposited | requested | withdrawn
-    mapping(euint256 ctHash => address) private depositNoteToken;
-    mapping(euint256 ctHash => uint256) private depositNoteAmount;
+    mapping(euint256 depositEmailWithSaltHash => eaddress) private depositNoteRecipientFromOtp; // when inited -> can withdraw
 
-    mapping(euint256 ctHash => eaddress) private depositNoteRecipientFromOtp; // when inited -> can withdraw
+    mapping(uint256 paired_key => uint8) public withdraw_requests;
 
     /**
      * @dev Initializes the contract with encrypted values and sets up access permissions
@@ -74,17 +80,29 @@ contract FHECounter {
         return otpNotes[otpNoteKey];
     }
 
-    // getter for ts explorability
-    function getOtpNoteCommitter(euint256 ctHash) public view returns (address) {
-        return otpNotesCommitter[ctHash];
-    }
-
     function getOtpNoteKey(
         eaddress user_address,
         euint64 timestamp_with_salt,
         euint256 email_with_salt_hash
     ) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(user_address, timestamp_with_salt, email_with_salt_hash));
+    }
+
+    function getDepositNote(
+        euint256 depositEmailWithSaltHash
+    ) public view returns (DepositNote memory, eaddress, bool, address) {
+        DepositNote memory note;
+        note.encEmailWithSaltHash = depositEmailWithSaltHash;
+        note.token = depositNoteToken[depositEmailWithSaltHash];
+        note.amount = depositNoteAmount[depositEmailWithSaltHash];
+
+        eaddress recipient = depositNoteRecipientFromOtp[depositEmailWithSaltHash];
+
+        (address recipient_plain, bool is_decrypted) = FHE.getDecryptResultSafe(
+            depositNoteRecipientFromOtp[depositEmailWithSaltHash]
+        );
+
+        return (note, recipient, is_decrypted, recipient_plain);
     }
 
     function commitOtpNote(
@@ -113,40 +131,52 @@ contract FHECounter {
         FHE.allowSender(otpNotes[otpNoteKey].encTimestampWithSaltHash); //
     }
 
-    function commitDepositNote(euint256 depositNoteRef, address token, uint256 amount) public {
+    function commitDepositNote(InEuint256 memory _depositEmailWithSaltHash, address token, uint256 amount) public {
+        euint256 depositEmailWithSaltHash = FHE.asEuint256(_depositEmailWithSaltHash);
         // TODO: take token from user etc
-        depositNotes[depositNoteRef] = 1; // deposited
-        depositNoteToken[depositNoteRef] = token;
-        depositNoteAmount[depositNoteRef] = amount;
+        depositNotes[depositEmailWithSaltHash] = 1; // deposited
+        depositNoteToken[depositEmailWithSaltHash] = token;
+        depositNoteAmount[depositEmailWithSaltHash] = amount;
+
+        FHE.allowThis(depositEmailWithSaltHash); // now contract can write but not read it seems
+        FHE.allowSender(depositEmailWithSaltHash); //
     }
 
-    function unpackEmailFromDepositNote(euint256 depositNote) public returns (euint256) {
-        // TODO
-        return FHE.asEuint256(123);
+    function getPairedKey(euint256 depositNoteKey, uint256 otpNoteKey) public pure returns (uint256) {
+        uint256 paired_key = uint256(keccak256(abi.encodePacked(depositNoteKey, otpNoteKey)));
+        return paired_key;
     }
 
-    function unpackEmailFromOtpNote(euint256 otpNote) public returns (euint256) {
-        // TODO
-        return FHE.asEuint256(123);
-    }
-
-    function unpackRecipientFromOtpNote(euint256 otpNote) public returns (eaddress) {
-        // TODO
-        return FHE.asEaddress(0x1230DE36a047Abeb36Fe0E07F89305A73e74d22D); // random address
-    }
-
-    function prepareWithdrawRequest(euint256 depositNote, euint256 otpNote) public {
+    function prepareWithdrawRequest(euint256 depositNote, uint256 otpNoteKey) public {
         if (depositNotes[depositNote] != 1) {
             revert("Deposit note unavailable for requesting withdrawal");
         }
-        euint256 email_hash_from_deposit_note = unpackEmailFromDepositNote(depositNote);
-        euint256 email_hash_from_otp_note = unpackEmailFromOtpNote(otpNote);
+        uint256 paired_key = getPairedKey(depositNote, otpNoteKey);
+        if (withdraw_requests[paired_key] != 0) {
+            revert("Withdraw request for this deposit+otp note already exists");
+        }
+
+        euint256 email_hash_from_deposit_note = depositNote;
+        euint256 email_hash_from_otp_note = otpNotes[otpNoteKey].encEmailWithSaltHash;
+
+        // TODO: I believe need this check?
+        // if (uint256(email_hash_from_deposit_note) == uint256(email_hash_from_otp_note)) {
+        //     revert("Deposit note and OTP note email hashes do not match");
+        // }
 
         ebool hashes_match = FHE.eq(email_hash_from_deposit_note, email_hash_from_otp_note);
-        eaddress recipient = unpackRecipientFromOtpNote(otpNote);
 
-        depositNoteRecipientFromOtp[depositNote] = recipient;
-        depositNotes[depositNote] = 2; // request -prpared
+        withdraw_requests[paired_key] = 1; // requested
+
+        depositNoteRecipientFromOtp[depositNote] = FHE.select(
+            hashes_match,
+            otpNotes[otpNoteKey].encUserAddress,
+            FHE.asEaddress(0x0000000000000000000000000000000000000000)
+        );
+
+        FHE.allowThis(depositNoteRecipientFromOtp[depositNote]);
+        FHE.allowSender(depositNoteRecipientFromOtp[depositNote]);
+        depositNotes[depositNote] = 2; // request -prepared
     }
 
     function decryptDepositNoteRecipient(euint256 depositNote) public {

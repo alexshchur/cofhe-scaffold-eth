@@ -143,6 +143,39 @@ describe("Counter", function () {
       const unsealed_email_with_salt_hash = await cofhejs.unseal(email_ct_handle, FheTypes.Uint256);
       await hre.cofhe.expectResultValue(unsealed_email_with_salt_hash, email_with_salt_hash);
 
+      const depositorInitializeResult = await hre.cofhe.initializeWithHardhatSigner(alice);
+      await hre.cofhe.expectResultSuccess(depositorInitializeResult);
+
+      const encrypted_by_depositor_email = await cofhejs.encrypt([Encryptable.uint256(email_with_salt_hash)] as const);
+
+      const [depositor_email_input] = await hre.cofhe.expectResultSuccess(encrypted_by_depositor_email);
+      await counter
+        .connect(alice)
+        .commitDepositNote(depositor_email_input, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" /* weth */, 1000n);
+
+      // now read
+
+      const depositNote = await counter.connect(alice).getDepositNote(depositor_email_input.ctHash);
+      console.log({
+        depositNote,
+      });
+
+      await counter.connect(alice).prepareWithdrawRequest(depositor_email_input.ctHash, note_key);
+
+      const depositNoteAfterWithdrawRequest = await counter.connect(alice).getDepositNote(depositor_email_input.ctHash);
+      console.log({
+        depositNoteAfterWithdrawRequest,
+      });
+
+      await counter.connect(alice).decryptDepositNoteRecipient(depositor_email_input.ctHash);
+      await new Promise(r => setTimeout(r, 11 * 1000)); // wait for 10 secs to match the mock decryptiong logic timing: _decryptResultReadyTimestamp[ctHash] = uint64(block.timestamp) + asyncOffset;
+
+      const depositNoteAfterDecrypt = await counter.connect(alice).getDepositNote(depositor_email_input.ctHash);
+      console.log({
+        depositNoteAfterDecrypt,
+      });
+
+      await counter.connect(alice).withdraw(depositor_email_input.ctHash);
       //   // `hre.cofhe.mocks.expectPlaintext` is used to verify that the encrypted value is 0
       //   // This uses the encrypted variable `count` and retrieves the plaintext value from the on-chain mock contracts
       //   // This kind of test can only be done in a mock environment where the plaintext value is known
