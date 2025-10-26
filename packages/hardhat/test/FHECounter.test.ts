@@ -86,22 +86,48 @@ describe("Counter", function () {
       // cofhejs must be initialized before `encrypt` can be called
 
       // TODO: try to pack what's needed into this value
-      const value_to_write = 0x123n;
-      const encryptResult = await cofhejs.encrypt([Encryptable.uint256(value_to_write)] as const);
+      // otpNote contains: user-signed eth-address || user-email-hash of an email that was OTP-ed || timestamp
+      // can I actually pack it into uint256?
+      const user_address = "0x9a9b640f221fb8e7a283501367812c50c6805ed1";
+      const timestamp = 123456789n;
+      const email_with_salt_hash = 0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefan;
 
-      const [encryptedInput] = await hre.cofhe.expectResultSuccess(encryptResult);
-      await hre.cofhe.mocks.expectPlaintext(encryptedInput.ctHash, value_to_write);
+      const encrypted = await cofhejs.encrypt([
+        Encryptable.address(user_address),
+        Encryptable.uint64(timestamp),
+        Encryptable.uint256(email_with_salt_hash),
+      ] as const);
 
-      await counter.connect(bob).commitOtpNote(encryptedInput);
+      console.log("encrypted:", encrypted);
+      const [user_address_input, timestamp_input, emal_with_salt_input] =
+        await hre.cofhe.expectResultSuccess(encrypted);
 
-      const note_status = await counter.getOtpNoteStatus(encryptedInput.ctHash);
-      const note_committer = await counter.getOtpNoteCommitter(encryptedInput.ctHash);
-      console.log("note_status:", note_status);
-      console.log("note_committer:", note_committer);
+      await hre.cofhe.mocks.expectPlaintext(user_address_input.ctHash, BigInt(user_address));
+      await hre.cofhe.mocks.expectPlaintext(timestamp_input.ctHash, timestamp);
+      await hre.cofhe.mocks.expectPlaintext(emal_with_salt_input.ctHash, email_with_salt_hash);
 
-      const unsealedResult = await cofhejs.unseal(encryptedInput.ctHash, FheTypes.Uint256);
-      console.log({ unsealedResult });
-      await hre.cofhe.expectResultValue(unsealedResult, value_to_write);
+      await counter.connect(bob).commitOtpNote(user_address_input, timestamp_input, emal_with_salt_input);
+
+      const note_key = await counter.getOtpNoteKey(
+        user_address_input.ctHash,
+        timestamp_input.ctHash,
+        emal_with_salt_input.ctHash,
+      );
+      console.log("note_key:", note_key);
+
+      const note_details = await counter.getOtpNote(note_key);
+
+      // console.log("note_status:", note_status);
+      console.log("note_committer:", note_details);
+
+      const unsealed_user_address = await cofhejs.unseal(user_address_input.ctHash, FheTypes.Uint256);
+      await hre.cofhe.expectResultValue(unsealed_user_address, BigInt(user_address));
+
+      const unsealed_timestamp = await cofhejs.unseal(timestamp_input.ctHash, FheTypes.Uint64);
+      await hre.cofhe.expectResultValue(unsealed_timestamp, timestamp);
+
+      const unsealed_email_with_salt_hash = await cofhejs.unseal(emal_with_salt_input.ctHash, FheTypes.Uint256);
+      await hre.cofhe.expectResultValue(unsealed_email_with_salt_hash, email_with_salt_hash);
 
       //   // `hre.cofhe.mocks.expectPlaintext` is used to verify that the encrypted value is 0
       //   // This uses the encrypted variable `count` and retrieves the plaintext value from the on-chain mock contracts

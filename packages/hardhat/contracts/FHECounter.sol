@@ -19,6 +19,13 @@ error OnlyTrustedOtpCommitterAllowed(address caller);
  */
 import "hardhat/console.sol";
 
+struct OtpNote {
+    eaddress encUserAddress;
+    euint256 encEmailWithSaltHash;
+    euint64 encTimestampWithSaltHash;
+    address pubCommitter;
+}
+
 contract FHECounter {
     /// @notice The encrypted counter value
     address trusted_otp_committer = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
@@ -27,7 +34,8 @@ contract FHECounter {
     /// @notice A constant encrypted value of 1 used for increments/decrements (gas saving)
     euint32 private ONE;
 
-    mapping(euint256 ctHash => bool) private otpNotes;
+    mapping(uint256 => OtpNote) public otpNotes;
+
     mapping(euint256 ctHash => address) private otpNotesCommitter;
 
     mapping(euint256 ctHash => uint8) private depositNotes; // must be not boolean but state: deposited | requested | withdrawn
@@ -62,8 +70,8 @@ contract FHECounter {
     }
 
     // getter for ts explorability
-    function getOtpNoteStatus(euint256 ctHash) public view returns (bool) {
-        return otpNotes[ctHash];
+    function getOtpNote(uint256 otpNoteKey) public view returns (OtpNote memory) {
+        return otpNotes[otpNoteKey];
     }
 
     // getter for ts explorability
@@ -71,15 +79,38 @@ contract FHECounter {
         return otpNotesCommitter[ctHash];
     }
 
-    function commitOtpNote(InEuint256 memory _ctHash) public onlyTrustedOtpCommitter {
-        // otpNote contains: user-signed eth-address || user-email-hash of an email that was OTP-ed || timestamp
-        // AI: in what structure and how can I store this data? Need bitwise pack/unpack functions with FHE types
-        euint256 ctHash = FHE.asEuint256(_ctHash);
-        otpNotes[ctHash] = true;
-        otpNotesCommitter[ctHash] = msg.sender;
+    function getOtpNoteKey(
+        eaddress user_address,
+        euint64 timestamp_with_salt,
+        euint256 email_with_salt_hash
+    ) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(user_address, timestamp_with_salt, email_with_salt_hash));
+    }
 
-        FHE.allowThis(ctHash); // now contract can write but not read it seems
-        FHE.allowSender(ctHash); //
+    function commitOtpNote(
+        InEaddress memory _user_address,
+        InEuint64 memory _timestamp_with_salt,
+        InEuint256 memory _email_with_salt_hash
+    ) public onlyTrustedOtpCommitter {
+        eaddress user_address = FHE.asEaddress(_user_address);
+        euint64 timestamp_with_salt = FHE.asEuint64(_timestamp_with_salt);
+        euint256 email_with_salt_hash = FHE.asEuint256(_email_with_salt_hash);
+
+        uint256 otpNoteKey = uint256(getOtpNoteKey(user_address, timestamp_with_salt, email_with_salt_hash));
+
+        otpNotes[otpNoteKey].encEmailWithSaltHash = email_with_salt_hash;
+        otpNotes[otpNoteKey].encUserAddress = user_address;
+        otpNotes[otpNoteKey].encTimestampWithSaltHash = timestamp_with_salt;
+        otpNotes[otpNoteKey].pubCommitter = msg.sender;
+
+        FHE.allowThis(otpNotes[otpNoteKey].encEmailWithSaltHash); // now contract can write but not read it seems
+        FHE.allowSender(otpNotes[otpNoteKey].encEmailWithSaltHash); //
+
+        FHE.allowThis(otpNotes[otpNoteKey].encUserAddress); // now contract can write but not read it seems
+        FHE.allowSender(otpNotes[otpNoteKey].encUserAddress); //
+
+        FHE.allowThis(otpNotes[otpNoteKey].encTimestampWithSaltHash); // now contract can write but not read it seems
+        FHE.allowSender(otpNotes[otpNoteKey].encTimestampWithSaltHash); //
     }
 
     function commitDepositNote(euint256 depositNoteRef, address token, uint256 amount) public {
