@@ -2,6 +2,7 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import hre from "hardhat";
 import { cofhejs, Encryptable, FheTypes } from "cofhejs/node";
+import { OtpNoteStructOutput } from "../typechain-types/contracts/FHECounter";
 
 /**
  * @file FHECounter.test.ts
@@ -113,20 +114,33 @@ describe("Counter", function () {
         timestamp_input.ctHash,
         emal_with_salt_input.ctHash,
       );
+
       console.log("note_key:", note_key);
 
-      const note_details = await counter.getOtpNote(note_key);
+      const note_details: OtpNoteStructOutput = await counter.getOtpNote(note_key);
 
-      // console.log("note_status:", note_status);
-      console.log("note_committer:", note_details);
+      const [user_address_ct_handle, email_ct_handle, timestamp_ct_handle, otp_note_committer] = note_details;
 
-      const unsealed_user_address = await cofhejs.unseal(user_address_input.ctHash, FheTypes.Uint256);
+      //       note details: {
+      //   user_address_ct_handle: 114559657067922375818777741377286303958925648421173027698174777859324237383424n,
+      //   email_ct_handle: 89820477399498921943140565757271670376756464862036245726427084342522139772928n,
+      //   timestamp_ct_handle: 22396758350972728462713647775930637536329018080448761918573722901295838332160n,
+      //   otp_note_committer: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC'
+      // }
+      // console.log("note details:", {
+      //   user_address_ct_handle,
+      //   email_ct_handle,
+      //   timestamp_ct_handle,
+      //   otp_note_committer,
+      // });
+
+      const unsealed_user_address = await cofhejs.unseal(user_address_ct_handle, FheTypes.Uint256);
       await hre.cofhe.expectResultValue(unsealed_user_address, BigInt(user_address));
 
-      const unsealed_timestamp = await cofhejs.unseal(timestamp_input.ctHash, FheTypes.Uint64);
+      const unsealed_timestamp = await cofhejs.unseal(timestamp_ct_handle, FheTypes.Uint64);
       await hre.cofhe.expectResultValue(unsealed_timestamp, timestamp);
 
-      const unsealed_email_with_salt_hash = await cofhejs.unseal(emal_with_salt_input.ctHash, FheTypes.Uint256);
+      const unsealed_email_with_salt_hash = await cofhejs.unseal(email_ct_handle, FheTypes.Uint256);
       await hre.cofhe.expectResultValue(unsealed_email_with_salt_hash, email_with_salt_hash);
 
       //   // `hre.cofhe.mocks.expectPlaintext` is used to verify that the encrypted value is 0
