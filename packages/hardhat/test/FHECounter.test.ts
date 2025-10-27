@@ -49,49 +49,35 @@ describe("Counter", function () {
       // hre.cofhe.mocks.disableLogs()
     });
 
-    /**
-     * @dev Tests the basic increment functionality
-     * Demonstrates:
-     * - Reading encrypted values using hre.cofhe.mocks.expectPlaintext
-     * - Logging FHE operations using hre.cofhe.mocks.withLogs
-     */
-    // it("Should increment the counter", async function () {
-    //   const { counter, bob, alice } = await loadFixture(deployCounterFixture);
-    //   const count = await counter.count();
-
-    //   // `hre.cofhe.mocks.expectPlaintext` is used to verify that the encrypted value is 0
-    //   // This uses the encrypted variable `count` and retrieves the plaintext value from the on-chain mock contracts
-    //   // This kind of test can only be done in a mock environment where the plaintext value is known
-    //   await hre.cofhe.mocks.expectPlaintext(count, 0n);
-
-    //   // `hre.cofhe.mocks.withLogs` is used to log the FHE operations
-    //   // This is useful for debugging and understanding the FHE operations
-    //   // It will log the FHE operations to the console
-    //   await hre.cofhe.mocks.withLogs("counter.increment()", async () => {
-    //     await counter.connect(alice).increment();
-    //   });
-
-    //   const count2 = await counter.count();
-    //   await hre.cofhe.mocks.expectPlaintext(count2, 1n);
-    // });
-
-    it("commit otp note (commitOtpNote) and then read it", async function () {
+    it("commit otp note (commitOtpNote), read it, then deposit and withdraw by authorized address", async function () {
       const { counter, bob, alice } = await loadFixture(deployCounterFixture);
-      // const count = await counter.count();
-      // const { counter, bob } = await loadFixture(deployCounterFixture);
+
+      const user_address = "0x9a9b640f221fb8e7a283501367812c50c6805ed1";
+      const timestamp = 123456789n;
+      const email_with_salt_hash = 0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefan;
+
+      const depositorInitializeResult = await hre.cofhe.initializeWithHardhatSigner(alice);
+      await hre.cofhe.expectResultSuccess(depositorInitializeResult);
+
+      const encrypted_by_depositor_email = await cofhejs.encrypt([Encryptable.uint256(email_with_salt_hash)] as const);
+
+      const [depositor_email_input] = await hre.cofhe.expectResultSuccess(encrypted_by_depositor_email);
+      await counter
+        .connect(alice)
+        .commitDepositNote(depositor_email_input, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" /* weth */, 1000n);
+
+      // now read
+
+      const depositNote = await counter.connect(alice).getDepositNote(depositor_email_input.ctHash);
+      console.log({
+        depositNote,
+      });
 
       const initializeResult = await hre.cofhe.initializeWithHardhatSigner(bob);
       await hre.cofhe.expectResultSuccess(initializeResult);
 
       // `cofhejs.encrypt` is used to encrypt the value
       // cofhejs must be initialized before `encrypt` can be called
-
-      // TODO: try to pack what's needed into this value
-      // otpNote contains: user-signed eth-address || user-email-hash of an email that was OTP-ed || timestamp
-      // can I actually pack it into uint256?
-      const user_address = "0x9a9b640f221fb8e7a283501367812c50c6805ed1";
-      const timestamp = 123456789n;
-      const email_with_salt_hash = 0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefan;
 
       const encrypted = await cofhejs.encrypt([
         Encryptable.address(user_address),
@@ -143,26 +129,10 @@ describe("Counter", function () {
       const unsealed_email_with_salt_hash = await cofhejs.unseal(email_ct_handle, FheTypes.Uint256);
       await hre.cofhe.expectResultValue(unsealed_email_with_salt_hash, email_with_salt_hash);
 
-      const depositorInitializeResult = await hre.cofhe.initializeWithHardhatSigner(alice);
-      await hre.cofhe.expectResultSuccess(depositorInitializeResult);
-
-      const encrypted_by_depositor_email = await cofhejs.encrypt([Encryptable.uint256(email_with_salt_hash)] as const);
-
-      const [depositor_email_input] = await hre.cofhe.expectResultSuccess(encrypted_by_depositor_email);
-      await counter
-        .connect(alice)
-        .commitDepositNote(depositor_email_input, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" /* weth */, 1000n);
-
-      // now read
-
-      const depositNote = await counter.connect(alice).getDepositNote(depositor_email_input.ctHash);
-      console.log({
-        depositNote,
-      });
-
       await counter.connect(alice).prepareWithdrawRequest(depositor_email_input.ctHash, note_key);
 
       const depositNoteAfterWithdrawRequest = await counter.connect(alice).getDepositNote(depositor_email_input.ctHash);
+
       console.log({
         depositNoteAfterWithdrawRequest,
       });
@@ -171,140 +141,12 @@ describe("Counter", function () {
       await new Promise(r => setTimeout(r, 11 * 1000)); // wait for 10 secs to match the mock decryptiong logic timing: _decryptResultReadyTimestamp[ctHash] = uint64(block.timestamp) + asyncOffset;
 
       const depositNoteAfterDecrypt = await counter.connect(alice).getDepositNote(depositor_email_input.ctHash);
+
       console.log({
         depositNoteAfterDecrypt,
       });
 
       await counter.connect(alice).withdraw(depositor_email_input.ctHash);
-      //   // `hre.cofhe.mocks.expectPlaintext` is used to verify that the encrypted value is 0
-      //   // This uses the encrypted variable `count` and retrieves the plaintext value from the on-chain mock contracts
-      //   // This kind of test can only be done in a mock environment where the plaintext value is known
-      //   await hre.cofhe.mocks.expectPlaintext(count, 0n);
-
-      //   // `hre.cofhe.mocks.withLogs` is used to log the FHE operations
-      //   // This is useful for debugging and understanding the FHE operations
-      //   // It will log the FHE operations to the console
-      //   await hre.cofhe.mocks.withLogs("counter.increment()", async () => {
-      //     await counter.connect(alice).increment();
-      //     await counter.connect(alice).increment();
-      //     await counter.connect(alice).increment();
-      //   });
-
-      //   const count2 = await counter.count();
-      //   console.log("Encrypted count2:", count2);
-      //   await hre.cofhe.mocks.expectPlaintext(count2, 3n);
-
-      //   await hre.cofhe.mocks.withLogs("testing decrypting", async () => {
-      //     await counter.connect(alice).decrypt();
-      //     await new Promise(r => setTimeout(r, 10 * 1000)); // wait for 10 secs to match the mock decryptiong logic timing: _decryptResultReadyTimestamp[ctHash] = uint64(block.timestamp) + asyncOffset;
-      //     const decrypted_result = await counter.getDecrypted();
-      //     console.log("Decrypted result:", decrypted_result);
-      //   });
     });
-    // it("test decrypted", async function () {
-    //   const { counter, bob, alice } = await loadFixture(deployCounterFixture);
-    //   const count = await counter.count();
-
-    //   // `hre.cofhe.mocks.expectPlaintext` is used to verify that the encrypted value is 0
-    //   // This uses the encrypted variable `count` and retrieves the plaintext value from the on-chain mock contracts
-    //   // This kind of test can only be done in a mock environment where the plaintext value is known
-    //   await hre.cofhe.mocks.expectPlaintext(count, 0n);
-
-    //   // `hre.cofhe.mocks.withLogs` is used to log the FHE operations
-    //   // This is useful for debugging and understanding the FHE operations
-    //   // It will log the FHE operations to the console
-    //   await hre.cofhe.mocks.withLogs("counter.increment()", async () => {
-    //     await counter.connect(alice).increment();
-    //     await counter.connect(alice).increment();
-    //     await counter.connect(alice).increment();
-    //   });
-
-    //   const count2 = await counter.count();
-    //   console.log("Encrypted count2:", count2);
-    //   await hre.cofhe.mocks.expectPlaintext(count2, 3n);
-
-    //   await hre.cofhe.mocks.withLogs("testing decrypting", async () => {
-    //     await counter.connect(alice).decrypt();
-    //     await new Promise(r => setTimeout(r, 10 * 1000)); // wait for 10 secs to match the mock decryptiong logic timing: _decryptResultReadyTimestamp[ctHash] = uint64(block.timestamp) + asyncOffset;
-    //     const decrypted_result = await counter.getDecrypted();
-    //     console.log("Decrypted result:", decrypted_result);
-    //   });
-    // });
-
-    /**
-     * @dev Tests the cofhejs unseal functionality in mock environment
-     * Demonstrates:
-     * - Initializing FHE with a Hardhat signer
-     * - Reading and unsealing encrypted values
-     * - Verifying unsealed values match expectations
-     */
-    // it("cofhejs unseal (mocks)", async function () {
-    //   await hre.cofhe.mocks.enableLogs("cofhejs unseal (mocks)");
-    //   const { counter, bob } = await loadFixture(deployCounterFixture);
-
-    //   // `hre.cofhe.initializeWithHardhatSigner` is used to initialize FHE with a Hardhat signer
-    //   // Initialization is required before any `cofhejs.unseal` or `cofhejs.encrypt` operations can be performed
-    //   // `initializeWithHardhatSigner` is a helper function that initializes FHE with a Hardhat signer
-    //   // It returns a `Promise<Result<>>` type.
-
-    //   // The `Result<T>` type looks like this:
-    //   // {
-    //   //   success: boolean,
-    //   //   data: T (Permit | undefined in the case of initializeWithHardhatSigner),
-    //   //   error: CofhejsError | null,
-    //   // }
-    //   const initializeResult = await hre.cofhe.initializeWithHardhatSigner(bob);
-
-    //   // `hre.cofhe.expectResultSuccess` is used to verify that the `Result` is successful (success: true)
-    //   // If the `Result` is not successful, the test will fail
-    //   await hre.cofhe.expectResultSuccess(initializeResult);
-
-    //   const count = await counter.count();
-
-    //   // `cofhejs.unseal` is used to unseal the encrypted value
-    //   // cofhejs must be initialized before `unseal` can be called
-    //   const unsealedResult = await cofhejs.unseal(count, FheTypes.Uint32);
-
-    //   // `hre.cofhe.expectResultValue` is used to verify that the `Result.data` is the expected value
-    //   // If the `Result.data` is not the expected value, the test will fail
-    //   await hre.cofhe.expectResultValue(unsealedResult, 0n);
-
-    //   await counter.connect(bob).increment();
-
-    //   const count2 = await counter.count();
-    //   const unsealedResult2 = await cofhejs.unseal(count2, FheTypes.Uint32);
-    //   await hre.cofhe.expectResultValue(unsealedResult2, 1n);
-
-    //   await hre.cofhe.mocks.disableLogs();
-    // });
-
-    /**
-     * @dev Tests the cofhejs encryption and value setting functionality
-     * Demonstrates:
-     * - Encrypting values using cofhejs
-     * - Setting encrypted values in the contract
-     * - Verifying encrypted values using both mocks and unsealing
-    //  */
-    // it("cofhejs encrypt (mocks)", async function () {
-    //   const { counter, bob } = await loadFixture(deployCounterFixture);
-
-    //   const initializeResult = await hre.cofhe.initializeWithHardhatSigner(bob);
-    //   await hre.cofhe.expectResultSuccess(initializeResult);
-
-    //   // `cofhejs.encrypt` is used to encrypt the value
-    //   // cofhejs must be initialized before `encrypt` can be called
-    //   const encryptResult = await cofhejs.encrypt([Encryptable.uint32(5n)] as const);
-
-    //   const [encryptedInput] = await hre.cofhe.expectResultSuccess(encryptResult);
-    //   await hre.cofhe.mocks.expectPlaintext(encryptedInput.ctHash, 5n);
-
-    //   await counter.connect(bob).set(encryptedInput);
-
-    //   const count = await counter.count();
-    //   await hre.cofhe.mocks.expectPlaintext(count, 5n);
-
-    //   const unsealedResult = await cofhejs.unseal(count, FheTypes.Uint32);
-    //   await hre.cofhe.expectResultValue(unsealedResult, 5n);
-    // });
   });
 });
